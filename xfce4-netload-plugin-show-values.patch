@@ -1,0 +1,461 @@
+diff --git a/panel-plugin/netload.c b/panel-plugin/netload.c
+index b4868c4..c10780e 100644
+--- a/panel-plugin/netload.c
++++ b/panel-plugin/netload.c
+@@ -66,12 +66,12 @@ static char *errormessages[] = {
+ 
+ typedef struct
+ {
+-    gboolean use_label;
++    gboolean show_bars;
++    gboolean show_values;
+     gboolean auto_max;
+     gulong   max[SUM];
+     gint     update_interval;
+     GdkColor color[SUM];
+-    gchar    *label_text;
+     gchar    *network_device;
+     gchar    *old_network_device;
+ } t_monitor_options;
+@@ -80,8 +80,9 @@ typedef struct
+ typedef struct
+ {
+     GtkWidget  *box;
+-    GtkWidget  *label;
++    GtkWidget  *rcv_label;
+     GtkWidget  *status[SUM];
++    GtkWidget  *snd_label;
+ 
+     gulong     history[SUM][HISTSIZE_STORE];
+     gulong     net_max[SUM];
+@@ -93,9 +94,9 @@ typedef struct
+ 
+     /* Displayed text */
+     GtkBox    *opt_vbox;
+-    GtkWidget *opt_entry;
+-    GtkBox    *opt_hbox;
+-    GtkWidget *opt_use_label;
++    GtkWidget *opt_show_bars;
++    GtkWidget *opt_color_hbox[SUM];
++    GtkWidget *opt_show_values;
+     
+     /* Update interval */
+     GtkWidget *update_spinner;
+@@ -135,6 +136,8 @@ static gboolean update_monitors(t_global_monitor *global)
+ {
+     char buffer[SUM+1][BUFSIZ];
+     gchar caption[BUFSIZ];
++    gchar recieved[BUFSIZ];
++    gchar sended[BUFSIZ];
+     gulong net[SUM+1];
+     gulong display[SUM+1], max;
+     guint64 histcalculate;
+@@ -218,7 +221,9 @@ static gboolean update_monitors(t_global_monitor *global)
+         {
+             temp = 0.0;
+         }
+-        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(global->monitor->status[i]), temp);
++
++        if (global->monitor->options.show_bars)
++            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(global->monitor->status[i]), temp);
+ 
+         format_with_thousandssep( buffer[i], BUFSIZ, display[i] / 1024.0, 2 );
+     }
+@@ -233,6 +238,15 @@ static gboolean update_monitors(t_global_monitor *global)
+                     get_name(&(global->monitor->data)), ip ? ip : _("no IP address"),
+                     HISTSIZE_CALCULATE, buffer[IN], buffer[OUT], buffer[TOT]);
+         gtk_label_set_text(GTK_LABEL(global->tooltip_text), caption);
++
++        if (global->monitor->options.show_values)
++        {
++            g_snprintf(recieved, sizeof(recieved), _("%s kByte"), buffer[IN]);
++            gtk_label_set_text(GTK_LABEL(global->monitor->rcv_label), recieved);
++
++            g_snprintf(sended, sizeof(sended), _("%s kByte"), buffer[OUT]);
++            gtk_label_set_text(GTK_LABEL(global->monitor->snd_label), sended);
++        }
+     }
+ 
+     return TRUE;
+@@ -282,14 +296,19 @@ static void monitor_set_orientation (XfcePanelPlugin *plugin, GtkOrientation ori
+     }
+     gtk_widget_show(global->box);
+ 
+-    global->monitor->label = gtk_label_new(global->monitor->options.label_text);
+-    gtk_widget_show(global->monitor->label);
++    global->monitor->rcv_label = gtk_label_new("");
++    gtk_label_set_width_chars(GTK_LABEL(global->monitor->rcv_label), 13);
++    gtk_widget_show(global->monitor->rcv_label);
+ 
+     for (i = 0; i < SUM; i++)
+     {
+         global->monitor->status[i] = GTK_WIDGET(gtk_progress_bar_new());
+     }
+ 
++    global->monitor->snd_label = gtk_label_new("");
++    gtk_label_set_width_chars(GTK_LABEL(global->monitor->snd_label), 13);
++    gtk_widget_show(global->monitor->snd_label);
++
+     if (orientation == GTK_ORIENTATION_HORIZONTAL)
+     {
+         global->monitor->box = GTK_WIDGET(gtk_hbox_new(FALSE, 0));
+@@ -310,8 +329,8 @@ static void monitor_set_orientation (XfcePanelPlugin *plugin, GtkOrientation ori
+     }
+ 
+     gtk_box_pack_start(GTK_BOX(global->monitor->box),
+-                       GTK_WIDGET(global->monitor->label),
+-                       FALSE, FALSE, 0);
++                       GTK_WIDGET(global->monitor->rcv_label),
++                       TRUE, FALSE, 0);
+ 
+     gtk_container_set_border_width(GTK_CONTAINER(global->monitor->box), 2);
+     gtk_widget_show(GTK_WIDGET(global->monitor->box));
+@@ -332,7 +351,13 @@ static void monitor_set_orientation (XfcePanelPlugin *plugin, GtkOrientation ori
+ 
+         gtk_box_pack_start(GTK_BOX(global->monitor->box),
+                 GTK_WIDGET(global->monitor->status[i]), FALSE, FALSE, 0);
++
+     }
++
++    gtk_box_pack_start(GTK_BOX(global->monitor->box),
++                     GTK_WIDGET(global->monitor->snd_label),
++                     TRUE, FALSE, 0);
++
+     gtk_box_pack_start(GTK_BOX(global->box),
+                        GTK_WIDGET(global->monitor->box), FALSE, FALSE, 0);
+ 
+@@ -358,11 +383,6 @@ static void monitor_free(XfcePanelPlugin *plugin, t_global_monitor *global)
+         g_source_remove(global->timeout_id);
+     }
+ 
+-    if (global->monitor->options.label_text)
+-    {
+-        g_free(global->monitor->options.label_text);
+-    }
+-
+     gtk_widget_destroy(global->tooltip_text);
+ 
+     g_free(global);
+@@ -392,10 +412,9 @@ static t_global_monitor * monitor_new(XfcePanelPlugin *plugin)
+     xfce_panel_plugin_add_action_widget (plugin, global->ebox);
+ 
+     global->monitor = g_new(t_monitor, 1);
+-    global->monitor->options.label_text = g_strdup(DEFAULT_TEXT);
+     global->monitor->options.network_device = g_strdup("");
+     global->monitor->options.old_network_device = g_strdup("");
+-    global->monitor->options.use_label = TRUE;
++    global->monitor->options.show_values = TRUE;
+     global->monitor->options.auto_max = TRUE;
+     global->monitor->options.update_interval = UPDATE_TIMEOUT;
+     
+@@ -424,12 +443,17 @@ static void setup_monitor(t_global_monitor *global, gboolean supress_warnings)
+     gint i;
+ 
+     gtk_widget_hide(GTK_WIDGET(global->monitor->box));
+-    gtk_widget_hide(global->monitor->label);
+-    gtk_label_set_text(GTK_LABEL(global->monitor->label),
+-            global->monitor->options.label_text);
+-
++    gtk_widget_hide(global->monitor->rcv_label);
+     for (i = 0; i < SUM; i++)
++      gtk_widget_hide(global->monitor->status[i]);
++    gtk_widget_hide(global->monitor->snd_label);
++
++    if (global->monitor->options.show_bars)
+     {
++      for (i = 0; i < SUM; i++)
++      {
++        gtk_widget_show(global->monitor->status[i]);
++
+         gtk_widget_modify_bg(GTK_WIDGET(global->monitor->status[i]),
+                              GTK_STATE_PRELIGHT,
+                              &global->monitor->options.color[i]);
+@@ -449,14 +473,17 @@ static void setup_monitor(t_global_monitor *global, gboolean supress_warnings)
+         {
+             global->monitor->net_max[i] = global->monitor->options.max[i];
+         }
++      }
+     }
+ 
+     gtk_widget_show(GTK_WIDGET(global->monitor->box));
+-    if (global->monitor->options.use_label)
++
++    if (global->monitor->options.show_values)
+     {
+-        gtk_widget_show(global->monitor->label);
++        gtk_widget_show(global->monitor->rcv_label);
++        gtk_widget_show(global->monitor->snd_label);
+     }
+-    
++
+     if (!init_netload( &(global->monitor->data), global->monitor->options.network_device)
+             && !supress_warnings)
+     {
+@@ -495,7 +522,7 @@ static void monitor_read_config(XfcePanelPlugin *plugin, t_global_monitor *globa
+     if (!rc)
+         return;
+     
+-    global->monitor->options.use_label = xfce_rc_read_bool_entry (rc, "Use_Label", TRUE);
++    global->monitor->options.show_values = xfce_rc_read_bool_entry (rc, "Show_Values", TRUE);
+ 
+     if ((value = xfce_rc_read_entry (rc, "Color_In", NULL)) != NULL)
+     {
+@@ -507,12 +534,6 @@ static void monitor_read_config(XfcePanelPlugin *plugin, t_global_monitor *globa
+         gdk_color_parse(value,
+                         &global->monitor->options.color[OUT]);
+     }
+-    if ((value = xfce_rc_read_entry (rc, "Text", NULL)) && *value)
+-    {
+-        if (global->monitor->options.label_text)
+-            g_free(global->monitor->options.label_text);
+-        global->monitor->options.label_text = g_strdup(value);
+-    }
+     if ((value = xfce_rc_read_entry (rc, "Network_Device", NULL)) && *value)
+     {
+         if (global->monitor->options.network_device)
+@@ -556,7 +577,7 @@ static void monitor_write_config(XfcePanelPlugin *plugin, t_global_monitor *glob
+     if (!rc)
+         return;
+     
+-    xfce_rc_write_bool_entry (rc, "Use_Label", global->monitor->options.use_label);
++    xfce_rc_write_bool_entry (rc, "Show_Values", global->monitor->options.show_values);
+ 
+     g_snprintf(value, 8, "#%02X%02X%02X",
+                (guint)global->monitor->options.color[IN].red >> 8,
+@@ -570,9 +591,6 @@ static void monitor_write_config(XfcePanelPlugin *plugin, t_global_monitor *glob
+                (guint)global->monitor->options.color[OUT].blue >> 8);
+     xfce_rc_write_entry (rc, "Color_Out", value);
+ 
+-    xfce_rc_write_entry (rc, "Text", global->monitor->options.label_text ?
+-                                     global->monitor->options.label_text : "");
+-
+     xfce_rc_write_entry (rc, "Network_Device", global->monitor->options.network_device ? 
+                                                global->monitor->options.network_device : "");
+     
+@@ -620,13 +638,6 @@ static void monitor_apply_options(t_global_monitor *global)
+ {
+     gint i;
+     
+-    if (global->monitor->options.label_text)
+-    {
+-        g_free(global->monitor->options.label_text);
+-    }
+-
+-    global->monitor->options.label_text =
+-        g_strdup(gtk_entry_get_text(GTK_ENTRY(global->monitor->opt_entry)));
+     setup_monitor(global, FALSE);
+ 
+ 
+@@ -654,22 +665,6 @@ static void monitor_apply_options(t_global_monitor *global)
+ 
+ 
+ /* ---------------------------------------------------------------------------------------------- */
+-static void label_changed(GtkWidget *button, t_global_monitor *global)
+-{
+-    if (global->monitor->options.label_text)
+-    {
+-        g_free(global->monitor->options.label_text);
+-    }
+-
+-    global->monitor->options.label_text =
+-        g_strdup(gtk_entry_get_text(GTK_ENTRY(global->monitor->opt_entry)));
+-
+-    setup_monitor(global, FALSE);
+-    PRINT_DBG("label_changed");
+-}
+-
+-
+-/* ---------------------------------------------------------------------------------------------- */
+ static void max_label_changed(GtkWidget *button, t_global_monitor *global)
+ {
+     gint i;
+@@ -701,16 +696,40 @@ static void network_changed(GtkWidget *button, t_global_monitor *global)
+ 
+ 
+ /* ---------------------------------------------------------------------------------------------- */
+-static void label_toggled(GtkWidget *check_button, t_global_monitor *global)
++static void show_bars_toggled(GtkWidget *check_button, t_global_monitor *global)
+ {
+-    global->monitor->options.use_label = !global->monitor->options.use_label;
+-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global->monitor->opt_use_label),
+-                                 global->monitor->options.use_label);
+-    gtk_widget_set_sensitive(GTK_WIDGET(global->monitor->opt_entry),
+-                             global->monitor->options.use_label);
++    int i;
++
++    global->monitor->options.show_bars = !global->monitor->options.show_bars;
++    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global->monitor->opt_show_bars),
++                                 global->monitor->options.show_bars);
++
++    for (i = 0; i < SUM; i++)
++    {
++        gtk_widget_set_sensitive(GTK_WIDGET(global->monitor->opt_color_hbox[i]),
++                                 global->monitor->options.show_bars);
++    }
++
++    gtk_widget_set_sensitive(GTK_WIDGET(global->monitor->opt_show_values),
++                             global->monitor->options.show_bars);
++
++    setup_monitor(global, FALSE);
++    PRINT_DBG("show_bars_toggled");
++}
++
++
++/* ---------------------------------------------------------------------------------------------- */
++static void show_values_toggled(GtkWidget *check_button, t_global_monitor *global)
++{
++    global->monitor->options.show_values = !global->monitor->options.show_values;
++    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global->monitor->opt_show_values),
++                                 global->monitor->options.show_values);
++
++    gtk_widget_set_sensitive(GTK_WIDGET(global->monitor->opt_show_bars),
++                             global->monitor->options.show_values);
+ 
+     setup_monitor(global, FALSE);
+-    PRINT_DBG("label_toggled");
++    PRINT_DBG("show_values_toggled");
+ }
+ 
+ 
+@@ -826,7 +845,6 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+     GtkWidget        *update_label, *update_unit_label;
+     GtkWidget        *color_label[SUM];
+     GtkWidget        *align;
+-    GtkBox           *color_hbox[SUM];
+     GtkSizeGroup     *sg;
+     gint             i;
+     gchar            buffer[BUFSIZ];
+@@ -865,37 +883,6 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+     global->monitor->opt_vbox = GTK_BOX(gtk_vbox_new(FALSE, 5));
+     gtk_widget_show(GTK_WIDGET(global->monitor->opt_vbox));
+ 
+-    /* Displayed text */
+-    global->monitor->opt_hbox = GTK_BOX(gtk_hbox_new(FALSE, 5));
+-    gtk_widget_show(GTK_WIDGET(global->monitor->opt_hbox));
+-    
+-    global->monitor->opt_use_label =
+-        gtk_check_button_new_with_mnemonic(_("Text to display:"));
+-    gtk_widget_show(global->monitor->opt_use_label);
+-    gtk_box_pack_start(GTK_BOX(global->monitor->opt_hbox),
+-                       GTK_WIDGET(global->monitor->opt_use_label),
+-                       FALSE, FALSE, 0);
+-    gtk_size_group_add_widget(sg, global->monitor->opt_use_label);
+-
+-    global->monitor->opt_entry = gtk_entry_new();
+-    gtk_entry_set_max_length(GTK_ENTRY(global->monitor->opt_entry),
+-                             MAX_LENGTH);
+-    gtk_entry_set_text(GTK_ENTRY(global->monitor->opt_entry),
+-                       global->monitor->options.label_text);
+-    gtk_widget_show(global->monitor->opt_entry);
+-    gtk_box_pack_start(GTK_BOX(global->monitor->opt_hbox),
+-                       GTK_WIDGET(global->monitor->opt_entry),
+-                   FALSE, FALSE, 0);
+-
+-    gtk_box_pack_start(GTK_BOX(global->monitor->opt_vbox),
+-                       GTK_WIDGET(global->monitor->opt_hbox),
+-                       FALSE, FALSE, 0);
+-
+-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global->monitor->opt_use_label),
+-                                 global->monitor->options.use_label);
+-    gtk_widget_set_sensitive(GTK_WIDGET(global->monitor->opt_entry),
+-                             global->monitor->options.use_label);
+-                             
+     /* Network device */
+     net_hbox = GTK_BOX(gtk_hbox_new(FALSE, 5));
+     gtk_box_pack_start(GTK_BOX(global->monitor->opt_vbox),
+@@ -912,7 +899,6 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+                              MAX_LENGTH);
+     gtk_entry_set_text(GTK_ENTRY(global->monitor->net_entry),
+                        global->monitor->options.network_device);
+-    gtk_widget_show(global->monitor->opt_entry);
+ 
+     gtk_box_pack_start(GTK_BOX(net_hbox), GTK_WIDGET(global->monitor->net_entry),
+                        FALSE, FALSE, 0);
+@@ -1002,18 +988,30 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+     gtk_box_pack_start(GTK_BOX(global->monitor->opt_vbox), GTK_WIDGET(sep2), FALSE, FALSE, 0);
+     gtk_widget_show(sep2);
+     
++    /* Show bars */
++    global->monitor->opt_show_bars =
++        gtk_check_button_new_with_mnemonic(_("Show bars"));
++    gtk_widget_show(global->monitor->opt_show_bars);
++    gtk_box_pack_start(GTK_BOX(global->monitor->opt_vbox),
++                       GTK_WIDGET(global->monitor->opt_show_bars),
++                       FALSE, FALSE, 0);
++    gtk_size_group_add_widget(sg, global->monitor->opt_show_bars);
++
++    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global->monitor->opt_show_bars),
++                                 global->monitor->options.show_bars);
++
+     /* Color 1 */
+     for (i = 0; i < SUM; i++)
+     {
+-        color_hbox[i] = GTK_BOX(gtk_hbox_new(FALSE, 5));
+-        gtk_widget_show(GTK_WIDGET(color_hbox[i]));
++        global->monitor->opt_color_hbox[i] = gtk_hbox_new(FALSE, 5);
++        gtk_widget_show(GTK_WIDGET(global->monitor->opt_color_hbox[i]));
+         gtk_box_pack_start(GTK_BOX(global->monitor->opt_vbox),
+-                GTK_WIDGET(color_hbox[i]), FALSE, FALSE, 0);
++                GTK_WIDGET(global->monitor->opt_color_hbox[i]), FALSE, FALSE, 0);
+ 
+         color_label[i] = gtk_label_new(_(color_text[i]));
+         gtk_misc_set_alignment(GTK_MISC(color_label[i]), 0, 0.5);
+         gtk_widget_show(GTK_WIDGET(color_label[i]));
+-        gtk_box_pack_start(GTK_BOX(color_hbox[i]), GTK_WIDGET(color_label[i]),
++        gtk_box_pack_start(GTK_BOX(global->monitor->opt_color_hbox[i]), GTK_WIDGET(color_label[i]),
+                 FALSE, FALSE, 0);
+ 
+         global->monitor->opt_button[i] = gtk_button_new();
+@@ -1026,14 +1024,26 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+                 global->monitor->opt_da[i]);
+         gtk_widget_show(GTK_WIDGET(global->monitor->opt_button[i]));
+         gtk_widget_show(GTK_WIDGET(global->monitor->opt_da[i]));
+-        gtk_box_pack_start(GTK_BOX(color_hbox[i]),
++        gtk_box_pack_start(GTK_BOX(global->monitor->opt_color_hbox[i]),
+                 GTK_WIDGET(global->monitor->opt_button[i]),
+                 FALSE, FALSE, 0);
+ 
+         gtk_size_group_add_widget(sg, color_label[i]);
+ 
+     }
+-    
++
++    /* Show values */
++    global->monitor->opt_show_values =
++        gtk_check_button_new_with_mnemonic(_("Show values"));
++    gtk_widget_show(global->monitor->opt_show_values);
++    gtk_box_pack_start(GTK_BOX(global->monitor->opt_vbox),
++                       GTK_WIDGET(global->monitor->opt_show_values),
++                       FALSE, FALSE, 0);
++    gtk_size_group_add_widget(sg, global->monitor->opt_show_values);
++
++    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(global->monitor->opt_show_values),
++                                 global->monitor->options.show_values);
++
+     gtk_box_pack_start(GTK_BOX(vbox),
+                 GTK_WIDGET(global->monitor->opt_vbox),
+                 FALSE, FALSE, 0);
+@@ -1042,7 +1052,7 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+     gtk_widget_set_size_request(align, 5, 5);
+     gtk_widget_show(GTK_WIDGET(align));
+     gtk_box_pack_start(GTK_BOX(vbox), GTK_WIDGET(align), FALSE, FALSE, 0);
+-    
++
+     gtk_box_pack_start( GTK_BOX(global_vbox), GTK_WIDGET(vbox), FALSE, FALSE, 0);
+     
+     g_signal_connect(GTK_WIDGET(global->monitor->max_use_label), "toggled",
+@@ -1055,10 +1065,10 @@ static void monitor_create_options(XfcePanelPlugin *plugin, t_global_monitor *gl
+             G_CALLBACK(change_color_in), global);
+     g_signal_connect(GTK_WIDGET(global->monitor->opt_button[OUT]), "clicked",
+             G_CALLBACK(change_color_out), global);
+-    g_signal_connect(GTK_WIDGET(global->monitor->opt_use_label), "toggled",
+-            G_CALLBACK(label_toggled), global);
+-    g_signal_connect(GTK_WIDGET(global->monitor->opt_entry), "activate",
+-            G_CALLBACK(label_changed), global);
++    g_signal_connect(GTK_WIDGET(global->monitor->opt_show_bars), "toggled",
++            G_CALLBACK(show_bars_toggled), global);
++    g_signal_connect(GTK_WIDGET(global->monitor->opt_show_values), "toggled",
++            G_CALLBACK(show_values_toggled), global);
+     g_signal_connect(GTK_WIDGET(global->monitor->net_entry), "activate",
+             G_CALLBACK(network_changed), global);
+ 
