@@ -2,7 +2,7 @@
 
 Name:          xfce4-netload-plugin
 Version:       1.0.0
-Release:       3.1%{?dist}.R
+Release:       3%{?dist}.1.R
 Summary:       Network-load monitor for the Xfce panel
 
 Group:         User Interface/Desktops
@@ -57,7 +57,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_datadir}/xfce4/panel-plugins/*.desktop
 
 %changelog
-* Sun Nov 13 2011 Romanov Ivan <drizt@land.ru> - 1.0.0-3.1.R
+* Mon Nov 14 2011 Romanov Ivan <drizt@land.ru> - 1.0.0-3.1.R
 - Added xfce4-netload-plugin-show-values patch
  
 * Wed Feb 09 2011 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 1.0.0-3
